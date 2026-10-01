@@ -1,0 +1,711 @@
+STUDENT_NAME: Zhuotong Xie
+NETID: zx180
+OPTION: 1
+ROLE: architect
+AGENT_TOOL: Codex
+REPOSITORY_B_URL: https://github.com/1175882849x-coder/DashBite-Repository-B
+===== TRANSCRIPT START =====
+
+[STUDENT]
+You are the Architect for my IDS706 final assignment, Repository B, Option 1: Extend and Containerize DashBite.
+
+The classroom project is located at:\
+C:\Users\11758\OneDrive\Desktop\ids_706\TestingAndContainerizationDemo
+
+Please inspect the existing project and help me develop an implementation plan. Do not implement application changes yet.
+
+The baseline already contains a Dockerfile, .dockerignore, a five-service Compose configuration, a shared persistent data volume, and unit, regression, and integration tests. These existing features should be clearly distinguished from my own contributions.
+
+I would like to consider two improvements:
+
+1. A dashboard health check with clearly documented limitations.
+2. A reproducible containerized test workflow that does not modify the application's persistent runtime data.
+
+Please assess whether these improvements are appropriate and identify any necessary supporting changes. Keep the scope manageable.
+
+The plan should cover requirements, important files, design decisions, risks, tests, Docker and Compose verification, and a manual smoke-test checklist. Include how to verify that meaningful pipeline outputs are produced, not merely that containers start.
+
+Preserve the existing uncommitted Makefile and README changes. Plan how to establish a separate student-owned Repository B without changing or pushing to the classroom repository.
+
+Explain the tradeoffs so I can review and correct your recommendations. After my review, the finalized plan must be saved as docs/plan.md in Repository B.
+
+The assignment requires separate Architect, Builder, and Tester conversations. This conversation is Architect only, and I will preserve its complete visible transcript.
+
+
+[AGENT]
+I’ll inspect the classroom project and its current changes, then propose a manageable plan that separates the baseline from your contributions. I’ll keep this conversation Architect-only and leave the project files untouched.
+
+[AGENT]
+Both improvements fit the project. The main gaps are that the runtime image excludes the tests and fixtures, and a dashboard health check would only confirm that Streamlit responds—not that the pipeline produces valid data.
+
+The only tracked local changes are in `Makefile` and `README.md`, covering Windows setup and UTF-8 behavior. I’ll account for them separately from the classroom baseline. Some other Makefile commands still assume a Unix shell, so direct Compose commands should be the documented Windows workflow.
+
+[AGENT]
+I recommend a separate test-only Compose file with no runtime volume mounts. That makes data isolation easy to review and avoids changes to the pipeline’s data-path configuration. One new end-to-end test can then verify the full handoff from raw orders to predictions and dashboard metrics, supplementing the existing stage-level tests.
+
+[AGENT]
+The existing Compose configuration passes validation, and Docker reports a Linux container engine. I haven’t built images or started services during this inspection.
+
+The documentation also needs a small correction: the README says “No containers,” and the older Docker guide describes `DATA_ROOT` support that the code does not implement. I recommend clarifying the actual setup and marking those guide sections as proposals.
+
+[AGENT]
+Both improvements are appropriate. I recommend a dashboard-only HTTP health check and a separate, disposable containerized test workflow, supported by dependency locking and one full-pipeline integration test. This keeps the scope manageable without changing the pipeline’s application behavior.
+
+I inspected the project without modifying files. The existing Compose configuration passes validation; Docker and Compose are installed, and the engine reports Linux containers. I did **not** build images, start services, or run pytest, so application correctness remains unverified.
+
+**Baseline and contribution boundaries**
+
+The classroom baseline is commit `3f51661f08e7b4c98137e94b09e7711f3c3f7e0b` (“Added Docker”).
+
+| Category | What belongs here |
+|---|---|
+| Classroom baseline | Dockerfile, `.dockerignore`, five runtime Compose services, shared named data volume, pipeline modules, dashboard, existing unit/regression/integration tests and fixtures |
+| Existing local changes | Makefile Windows interpreter/virtual-environment paths, UTF-8 setting and portable install marker; README activation instructions |
+| Proposed student contributions | Dashboard health check, isolated test image/workflow, dependency lock, full-pipeline output test, verification instructions and contribution documentation |
+
+The existing local changes should be preserved and recorded separately. Their authorship should be confirmed before labeling them as your original work.
+
+**Proposed requirements and design**
+
+1. **Dashboard health check**
+   - Add `healthcheck` only to the `dashboard` service in `compose.yaml`.
+   - Probe `http://127.0.0.1:8501/_stcore/health` using Python’s standard library, avoiding an additional curl installation.
+   - Require HTTP 200; connection errors, timeouts and other statuses must return a nonzero exit code.
+   - Start with a 30-second startup grace period, 10-second interval, 3-second request timeout, 5-second Docker timeout and three retries. Adjust only if measured startup behavior warrants it.
+   - Keep the probe in Compose because the shared image also runs four services without an HTTP server.
+
+   Streamlit documents this endpoint for container health checks. [Streamlit Docker guide](https://docs.streamlit.io/deploy/tutorials/docker)
+
+   **Document the limitation explicitly:** healthy means Streamlit’s HTTP health endpoint responds. It does not establish that dashboard pages render correctly, data is fresh, training succeeds, predictions exist, or the other services work. Docker health status also does not itself restart an unhealthy container. [Docker service reference](https://docs.docker.com/reference/compose-file/services/#healthcheck)
+
+2. **Isolated containerized tests**
+   - Add a **standalone** `compose.test.yaml` containing one test service.
+   - Give it no runtime volume, host data bind mount, published port, or runtime service dependency.
+   - Run the complete suite with `python -m pytest`; propagate its exit code.
+   - Continue using `tmp_path` and explicit `base=tmp_path`, which the existing file-writing tests already use.
+   - Remove the disposable container after each run.
+
+   Proposed commands, run from Repository B:
+
+   ```powershell
+   docker compose -p dashbite-b-tests -f compose.test.yaml config --quiet
+   docker compose -p dashbite-b-tests -f compose.test.yaml build tests
+   docker compose -p dashbite-b-tests -f compose.test.yaml run --rm --no-deps tests
+   ```
+
+   Compose supports this one-off execution and cleanup pattern. [Docker Compose run reference](https://docs.docker.com/reference/cli/docker/compose/run/)
+
+   **Tradeoff:** a separate file repeats a little configuration, but makes isolation easier to audit than a test service inheriting the runtime anchor. Do not combine it with `compose.yaml` as an override.
+
+3. **Reproducible build support**
+   - Refactor the Dockerfile into named runtime and test targets sharing the same dependency installation.
+   - Explicitly select the runtime target for the five application services.
+   - Let the test target add `tests/`, fixtures and `pytest.ini`.
+   - Remove the blanket `tests` exclusion from `.dockerignore`; keep runtime data, virtual environments and Git metadata excluded. Explicit Dockerfile copies will keep tests out of the runtime image.
+   - Add a generated lock file containing exact direct and transitive dependency versions, and use it for both targets.
+   - Pin the Python base image by digest, recording the supported Python version and tested platform.
+
+   The current `>=` requirements and floating `python:3.12-slim` tag permit different future builds. Locking improves repeatability, although it does not promise identical results across architectures or permanent package availability. A manual lock-refresh procedure is enough for this assignment.
+
+**Important files**
+
+| File | Planned responsibility |
+|---|---|
+| `compose.yaml` | Dashboard health check, runtime build target and student-specific image tag |
+| `Dockerfile` | Shared dependency layer, explicit runtime/test targets |
+| `.dockerignore` | Allow test build inputs while excluding local runtime data |
+| `compose.test.yaml` | Independent disposable pytest service |
+| `requirements.lock` | Exact resolved dependency versions |
+| `tests/integration/test_pipeline_e2e.py` | New deterministic full-pipeline handoff test |
+| `Makefile` | Preserve existing edits; optionally add a simple container-test shortcut |
+| `README.md` | Attribution, commands, limitations, verification and smoke checklist |
+| `docs/docker-k8s-guide.md` | Clarify which sections describe proposals |
+| `docs/plan.md` | Final reviewed Architect plan |
+
+No changes to `pipeline/` are currently necessary.
+
+The README currently says “No containers,” despite the existing Docker setup. The older guide describes a `DATA_ROOT` environment override that the code does not implement. Correct these statements instead of expanding scope to implement that override. Existing explicit `base` arguments and container isolation are sufficient.
+
+**Tests and meaningful output checks**
+
+Retain the full existing suite. Add one integration test that exercises:
+
+1. A fixed fixture or seeded batch with fixed IDs/timestamps and both label classes.
+2. Raw CSV writing into a temporary workspace.
+3. Preprocessing into features and a quality log.
+4. Training with a deliberately small threshold.
+5. Checkpoint loading and inference.
+6. Dashboard data loaders and metric helpers.
+
+Assert more than file existence:
+
+- Features contain nonzero valid rows and expected derived columns.
+- Quality records satisfy `rows_in = rows_out + rows_dropped`.
+- The checkpoint loads, metrics contain valid counts, and training state references it.
+- Predictions cover the expected feature order IDs without duplicates.
+- Probabilities are finite and within `[0, 1]`; labels are binary.
+- Prediction checkpoint IDs match the generated model.
+- Dashboard helpers return the expected fixture-based values.
+- Repeating preprocessing and inference without new input produces no duplicate outputs.
+
+The live simulator is not fully deterministic: it uses random generation, UUIDs and current timestamps. Therefore, live smoke testing should check valid outputs and progress rather than exact filenames or accuracy.
+
+**Docker and Compose verification**
+
+Builder and Tester should record:
+
+- Both Compose files validate.
+- Runtime and test targets build successfully.
+- The test image includes fixtures and configuration; the runtime image excludes tests and host data.
+- The full suite passes twice in fresh disposable containers.
+- An intentional failing test in a disposable verification copy produces a nonzero workflow exit code.
+- Inspection of the actual test container confirms no runtime data mounts.
+- A stopped runtime volume’s file inventory and hashes remain unchanged before and after tests. Stopping writers prevents normal pipeline activity from confusing this comparison.
+- The dashboard reaches healthy status, and an isolated failure exercise demonstrates an unhealthy status.
+- All five runtime services remain running **and produce valid pipeline outputs**.
+
+Use explicit Compose project names, such as `dashbite-b` for normal runtime and `dashbite-b-smoke` for smoke testing. Confirm the named volume is project-scoped and has no fixed external name. Use a student-specific image tag to avoid overwriting `dashbite:demo`.
+
+**Manual smoke-test checklist**
+
+Run this later in Repository B with a fresh, separately named smoke volume:
+
+- [ ] Build and start all five services; confirm dashboard health within a bounded startup window.
+- [ ] Open `http://localhost:8501`; inspect both Model Pulse and Ops Control.
+- [ ] Within an initial two-minute deadline, confirm nonempty raw CSVs, valid feature CSVs, quality records, a loadable checkpoint, metrics JSON and nonempty predictions.
+- [ ] Check prediction IDs against feature IDs and checkpoint references against the model files.
+- [ ] Observe a second interval: raw/features counts and quality throughput advance; prediction coverage advances after training.
+- [ ] Confirm dashboard sample volume, throughput and prediction displays correspond to the stored outputs.
+- [ ] Review all service logs for tracebacks, recurring read failures or stalled stages.
+- [ ] Stop and restart the smoke stack without deleting its volume; confirm retained data and resumed processing.
+- [ ] Stop the simulator; confirm dashboard health can remain healthy while new data stops arriving, demonstrating the documented limitation.
+- [ ] Clean up only the explicitly named disposable smoke resources.
+
+Container startup alone is not a passing result. A deadline failure should trigger inspection of training thresholds, label classes, logs and file contents.
+
+**Risks and scope limits**
+
+The baseline writes shared CSVs and checkpoints directly. Readers can encounter partially written files; a dashboard endpoint can remain healthy despite a page error. Keep one replica per service and record any observed race. Atomic-write redesign, scaling, Kubernetes, automatic recovery, new dashboard features and ML tuning should remain outside this plan unless an observed defect blocks acceptance.
+
+Port 8501 may already be occupied. Resolve that for smoke testing without stopping unrelated containers. Use `down` without `-v` for normal runtime shutdown; volume deletion belongs only to deliberate disposable-smoke cleanup.
+
+The two additions are useful engineering contributions, but whether they satisfy the assignment’s required extension size remains uncertain because the rubric was not supplied.
+
+**Establishing Repository B**
+
+After your review, create a separate sibling directory, provisionally:
+
+`C:\Users\11758\OneDrive\Desktop\ids_706\DashBite-Repository-B`
+
+Recommended sequence:
+
+1. Record the classroom commit, status and exact Makefile/README patch.
+2. Clone the classroom repository locally into the new directory, preserving baseline history.
+3. Remove the inherited classroom `origin` from **Repository B only**.
+4. Transfer the two working-file edits into Repository B and verify their contents match the originals.
+5. Commit those preserved edits separately with accurate attribution.
+6. Add the finalized plan as `docs/plan.md`.
+7. Add only the student-owned remote, when its URL is available; verify fetch and push destinations before any push.
+
+Do not copy `.venv`, runtime outputs, logs or caches. Do not commit, change remotes, clean data, or push in the classroom checkout. Its final status and diff should match the initial inspection.
+
+**Conversation handoff**
+
+This conversation remains Architect-only. After review, I will establish Repository B and save the finalized plan there, without implementing application changes. The separate Builder conversation should implement the approved plan; the separate Tester conversation should independently verify it and record evidence. Preserve the complete visible transcripts rather than replacing them with summaries.
+
+Please review the proposed scope, Repository B directory, and dependency-locking choice, and share any rubric requirements that might change the contribution expectations.
+
+[STUDENT]
+
+# Files pasted by the user:
+
+## "# Repository B Plan: DashBite Containerization Improvements ## 1. Goal Complete…": C:\Users\11758\.codex/attachments/1d1ce6f2-40dc-4639-b74f-2e118f01aec4/已粘贴的文本.txt
+
+Pasted text contains the user's request.
+
+## My request:
+
+
+
+[STUDENT]
+# Repository B Plan: DashBite Containerization Improvements
+
+## 1. Goal
+
+Complete Assignment Option 1 by extending the working classroom DashBite application with verifiable container-readiness improvements.
+
+DashBite simulates food-delivery orders, preprocesses records, trains a late-delivery prediction model, produces predictions, and displays results in a Streamlit dashboard.
+
+The project will preserve this workflow while improving service observability, containerized testing, and documentation.
+
+## 2. Baseline and Repository Setup
+
+Use the working local project as the implementation baseline:
+
+`C:\Users\11758\OneDrive\Desktop\ids_706\TestingAndContainerizationDemo`
+
+Before implementation:
+
+- Inspect the current code and run the existing test suite.
+- Preserve the uncommitted Makefile and README changes.
+- Establish a separate student-owned Repository B.
+- Record the classroom source repository and baseline commit.
+- Retain applicable attribution and license notices.
+- Do not modify or push to the classroom repository.
+- Exclude local virtual environments, secrets, caches, and generated runtime data from the new repository.
+
+Existing functionality includes a Dockerfile, Docker Compose with five services, persistent shared storage, and unit, regression, and integration tests. These are inherited features, not new student contributions.
+
+If `docs/plan.md` already exists, append this project section without deleting earlier planning history.
+
+## 3. Proposed Improvements
+
+### A. Dashboard Health Check
+
+Add a health check to the dashboard service.
+
+- Verify the appropriate Streamlit health endpoint for the installed version.
+- Use a probe available inside the image, preferably Python's standard library.
+- Configure a startup allowance, timeout, interval, and retry count.
+- Document how to inspect health status.
+- Explain that dashboard health does not prove the entire pipeline is producing correct results.
+
+### B. Isolated Containerized Testing
+
+Provide a documented command for running the complete test suite inside a container.
+
+- Include tests, fixtures, and pytest configuration in a dedicated test build target.
+- Keep application services on the runtime build target.
+- Add a test service under an opt-in Compose profile.
+- Do not mount the application's persistent data volume into the test service.
+- Use temporary test directories.
+- Preserve pytest's exit status so failures remain visible.
+
+### C. Consistent Commands and Documentation
+
+Following the classroom workflow, add Makefile targets for:
+
+- Building images.
+- Starting the application.
+- Inspecting service status and logs.
+- Running containerized tests.
+- Inspecting pipeline output.
+- Stopping services while preserving data.
+
+Document the equivalent Docker Compose commands for environments without Make.
+
+Replace outdated README statements such as “No containers.” Explain which features were inherited and which improvements were added.
+
+## 4. Architecture and Boundaries
+
+Preserve the existing five-service architecture:
+
+Simulator → raw data → preprocessing → features → training/model checkpoints → inference/predictions → dashboard.
+
+Training and inference remain independent processes. Inference must be able to use an existing checkpoint while training is stopped.
+
+Keep the existing shared named volume for application data. Test execution must remain isolated from it.
+
+Run one instance of each service. Kubernetes, cloud deployment, model redesign, and concurrent scaling are outside this project's scope.
+
+Preserve the local dashboard's existing functionality rather than replacing it with a different classroom version.
+
+## 5. Important Files
+
+- `Dockerfile`: runtime and test build targets.
+- `.dockerignore`: exclude unnecessary files while allowing required test inputs.
+- `compose.yaml`: dashboard health check and isolated test service.
+- `Makefile`: convenient build, run, test, inspect, and stop commands.
+- `tests/`: meaningful verification for new behavior.
+- `README.md`: setup, usage, evidence, limitations, and reflection.
+- `docs/plan.md`: agreed implementation and verification plan.
+- `docs/transcripts/`: complete role conversations.
+- `docs/images/`: screenshots of actual execution.
+
+## 6. Automated Verification
+
+The Builder should:
+
+1. Record the baseline test result.
+2. Preserve existing unit, regression, and integration tests.
+3. Add focused checks for health-probe behavior and test-service isolation where practical.
+4. Validate the resolved Compose configuration.
+5. Run the full suite locally and in the test container.
+6. Confirm failed containerized tests produce a nonzero exit status.
+7. Verify test execution does not create or modify application runtime artifacts.
+
+Tests should check behavior, not merely search configuration files for expected strings.
+
+## 7. Manual Smoke Test
+
+The student must perform this after Builder completion and before the Tester conversation.
+
+The Builder must provide exact, runnable Makefile and Compose commands for the final implementation.
+
+### What to demonstrate
+
+1. Build and start all five application services.
+2. Confirm the dashboard becomes healthy.
+3. Open the dashboard and verify its main views load.
+4. Inspect real pipeline artifacts:
+   - Raw order batches.
+   - Preprocessed feature files.
+   - Model checkpoints and metrics.
+   - Prediction files with populated rows.
+   - Data-quality logs.
+5. After a checkpoint exists, stop training and verify inference produces predictions for new orders using that checkpoint.
+6. Stop and recreate the application containers without deleting the named volume. Confirm previously recorded artifacts remain.
+7. Run containerized tests separately and verify application data is unaffected.
+8. Stop the application cleanly.
+
+Save screenshots and record actual observations in the README. Do not describe planned checks as completed checks.
+
+## 8. Risks and Design Decisions
+
+- File-based stages can take time to produce their first outputs. Use bounded waiting and logs for diagnosis.
+- Dashboard health is narrower than end-to-end pipeline health.
+- Tests must not inherit the application's writable data volume.
+- Ordinary shutdown must preserve stored data; destructive cleanup should be a separate, clearly documented action.
+- Docker Hub connectivity has previously failed on the home Ethernet connection. Record network-related failures separately from application defects.
+- Verify Windows/Git Bash commands instead of assuming Unix shell scripts work unchanged.
+
+## 9. AI Workflow and Submission
+
+- Architect: inspect, propose, discuss tradeoffs, and finalize this plan after student review.
+- Builder: implement the agreed plan and explain important decisions.
+- Student: perform and document the manual smoke test.
+- Tester: independently compare the implementation with the plan, check edge cases, and verify instructions.
+- Fix important findings and rerun relevant checks.
+
+The README must explain at least one AI recommendation accepted and one changed or rejected, based on actual decisions.
+
+Preserve complete visible conversations as:
+
+- `<NetID>_architect.txt`
+- `<NetID>_builder.txt`
+- `<NetID>_tester.txt`
+
+Use the assignment's required headers and speaker labels. Commit them under `docs/transcripts/` and upload the same three files separately to Canvas.
+
+## 10. Completion Criteria
+
+The project is complete when:
+
+- The separate Repository B identifies its classroom source and original improvements.
+- The application builds and produces meaningful outputs in containers.
+- The dashboard health check works and its limitations are documented.
+- Containerized tests pass without affecting persistent application data.
+- The student has completed the manual smoke test.
+- Tester findings have been addressed.
+- The README, finalized plan, screenshots, and three transcripts are present.
+
+[AGENT]
+I’ll read the pasted request and use it to refine the Architect plan.
+
+[AGENT]
+Your revised plan uses an opt-in Compose profile and adds command shortcuts, evidence capture, and a smoke test with training stopped. I’ll use it as the basis for `docs/plan.md` in a separate local Repository B, with explicit safeguards against test-volume inheritance. I’ll leave dependency locking as an optional follow-up and make no application changes.
+
+[AGENT]
+Repository B is now separate, with its inherited remote removed. The Makefile and README edits were copied exactly and remain uncommitted; no application implementation has started.
+
+The saved plan also makes two limits explicit: the test profile must be checked for inherited mounts, and repeatable commands alone do not freeze dependencies. It includes checks for populated predictions, checkpoint reuse while training is stopped, and unchanged runtime data during tests.
+
+[AGENT]
+# Repository B Plan: DashBite Containerization Improvements
+
+## 1. Goal
+
+Complete Assignment Option 1 by extending the working classroom DashBite application with verifiable container-readiness improvements.
+
+DashBite simulates food-delivery orders, preprocesses records, trains a late-delivery prediction model, produces predictions, and displays results in a Streamlit dashboard.
+
+The project will preserve this workflow while improving service observability, containerized testing, and documentation.
+
+## 2. Baseline and Repository Setup
+
+Use the working local project as the implementation baseline:
+
+`C:\Users\11758\OneDrive\Desktop\ids_706\TestingAndContainerizationDemo`
+
+Before implementation:
+
+- Inspect the current code and run the existing test suite.
+- Preserve the uncommitted Makefile and README changes.
+- Establish a separate student-owned Repository B.
+- Record the classroom source repository and baseline commit.
+- Retain applicable attribution and license notices.
+- Do not modify or push to the classroom repository.
+- Exclude local virtual environments, secrets, caches, and generated runtime data from the new repository.
+
+Existing functionality includes a Dockerfile, Docker Compose with five services, persistent shared storage, and unit, regression, and integration tests. These are inherited features, not new student contributions.
+
+If `docs/plan.md` already exists, append this project section without deleting earlier planning history.
+
+## 3. Proposed Improvements
+
+### A. Dashboard Health Check
+
+Add a health check to the dashboard service.
+
+- Verify the appropriate Streamlit health endpoint for the installed version.
+- Use a probe available inside the image, preferably Python's standard library.
+- Configure a startup allowance, timeout, interval, and retry count.
+- Document how to inspect health status.
+- Explain that dashboard health does not prove the entire pipeline is producing correct results.
+
+### B. Isolated Containerized Testing
+
+Provide a documented command for running the complete test suite inside a container.
+
+- Include tests, fixtures, and pytest configuration in a dedicated test build target.
+- Keep application services on the runtime build target.
+- Add a test service under an opt-in Compose profile.
+- Do not mount the application's persistent data volume into the test service.
+- Use temporary test directories.
+- Preserve pytest's exit status so failures remain visible.
+
+### C. Consistent Commands and Documentation
+
+Following the classroom workflow, add Makefile targets for:
+
+- Building images.
+- Starting the application.
+- Inspecting service status and logs.
+- Running containerized tests.
+- Inspecting pipeline output.
+- Stopping services while preserving data.
+
+Document the equivalent Docker Compose commands for environments without Make.
+
+Replace outdated README statements such as “No containers.” Explain which features were inherited and which improvements were added.
+
+## 4. Architecture and Boundaries
+
+Preserve the existing five-service architecture:
+
+Simulator → raw data → preprocessing → features → training/model checkpoints → inference/predictions → dashboard.
+
+Training and inference remain independent processes. Inference must be able to use an existing checkpoint while training is stopped.
+
+Keep the existing shared named volume for application data. Test execution must remain isolated from it.
+
+Run one instance of each service. Kubernetes, cloud deployment, model redesign, and concurrent scaling are outside this project's scope.
+
+Preserve the local dashboard's existing functionality rather than replacing it with a different classroom version.
+
+## 5. Important Files
+
+- `Dockerfile`: runtime and test build targets.
+- `.dockerignore`: exclude unnecessary files while allowing required test inputs.
+- `compose.yaml`: dashboard health check and isolated test service.
+- `Makefile`: convenient build, run, test, inspect, and stop commands.
+- `tests/`: meaningful verification for new behavior.
+- `README.md`: setup, usage, evidence, limitations, and reflection.
+- `docs/plan.md`: agreed implementation and verification plan.
+- `docs/transcripts/`: complete role conversations.
+- `docs/images/`: screenshots of actual execution.
+
+## 6. Automated Verification
+
+The Builder should:
+
+1. Record the baseline test result.
+2. Preserve existing unit, regression, and integration tests.
+3. Add focused checks for health-probe behavior and test-service isolation where practical.
+4. Validate the resolved Compose configuration.
+5. Run the full suite locally and in the test container.
+6. Confirm failed containerized tests produce a nonzero exit status.
+7. Verify test execution does not create or modify application runtime artifacts.
+
+Tests should check behavior, not merely search configuration files for expected strings.
+
+## 7. Manual Smoke Test
+
+The student must perform this after Builder completion and before the Tester conversation.
+
+The Builder must provide exact, runnable Makefile and Compose commands for the final implementation.
+
+### What to demonstrate
+
+1. Build and start all five application services.
+2. Confirm the dashboard becomes healthy.
+3. Open the dashboard and verify its main views load.
+4. Inspect real pipeline artifacts:
+   - Raw order batches.
+   - Preprocessed feature files.
+   - Model checkpoints and metrics.
+   - Prediction files with populated rows.
+   - Data-quality logs.
+5. After a checkpoint exists, stop training and verify inference produces predictions for new orders using that checkpoint.
+6. Stop and recreate the application containers without deleting the named volume. Confirm previously recorded artifacts remain.
+7. Run containerized tests separately and verify application data is unaffected.
+8. Stop the application cleanly.
+
+Save screenshots and record actual observations in the README. Do not describe planned checks as completed checks.
+
+## 8. Risks and Design Decisions
+
+- File-based stages can take time to produce their first outputs. Use bounded waiting and logs for diagnosis.
+- Dashboard health is narrower than end-to-end pipeline health.
+- Tests must not inherit the application's writable data volume.
+- Ordinary shutdown must preserve stored data; destructive cleanup should be a separate, clearly documented action.
+- Docker Hub connectivity has previously failed on the home Ethernet connection. Record network-related failures separately from application defects.
+- Verify Windows/Git Bash commands instead of assuming Unix shell scripts work unchanged.
+
+## 9. AI Workflow and Submission
+
+- Architect: inspect, propose, discuss tradeoffs, and finalize this plan after student review.
+- Builder: implement the agreed plan and explain important decisions.
+- Student: perform and document the manual smoke test.
+- Tester: independently compare the implementation with the plan, check edge cases, and verify instructions.
+- Fix important findings and rerun relevant checks.
+
+The README must explain at least one AI recommendation accepted and one changed or rejected, based on actual decisions.
+
+Preserve complete visible conversations as:
+
+- `<NetID>_architect.txt`
+- `<NetID>_builder.txt`
+- `<NetID>_tester.txt`
+
+Use the assignment's required headers and speaker labels. Commit them under `docs/transcripts/` and upload the same three files separately to Canvas.
+
+## 10. Completion Criteria
+
+The project is complete when:
+
+- The separate Repository B identifies its classroom source and original improvements.
+- The application builds and produces meaningful outputs in containers.
+- The dashboard health check works and its limitations are documented.
+- Containerized tests pass without affecting persistent application data.
+- The student has completed the manual smoke test.
+- Tester findings have been addressed.
+- The README, finalized plan, screenshots, and three transcripts are present.
+## 11. Architect Finalization and Acceptance Details (2026-10-01)
+
+This plan incorporates the student's reviewed scope. No application changes were made during Architect setup.
+
+### Provenance and local Repository B
+
+- Classroom source: https://github.com/ammylin/TestingAndContainerizationDemo.git
+- Baseline commit: 3f51661f08e7b4c98137e94b09e7711f3c3f7e0b (Added Docker).
+- Separate local Repository B: C:\Users\11758\OneDrive\Desktop\ids_706\DashBite-Repository-B.
+- Repository B retains baseline Git history. Its inherited origin has been removed; no student remote has been configured and nothing has been pushed.
+- Existing Makefile and README working changes have been copied exactly into Repository B and remain uncommitted. Record these separately from new implementation contributions; confirm authorship before claiming them as original work.
+- Do not commit virtual environments, runtime data, secrets, or caches. Retain any applicable source attribution and license notices; inspection did not identify a license file, so do not invent one.
+- The classroom checkout must retain the same HEAD, remotes, and Makefile/README diff after this setup.
+
+### Reviewed choices and scope
+
+The student-selected opt-in test profile replaces the Architect's initial recommendation for a separate test-only Compose file. This keeps commands in one configuration, but introduces a risk of inheriting runtime settings. The test service must be defined independently of the x-dashbite anchor: no dashbite-data mount, no host data bind mount, no depends_on, no published ports, and no shared runtime image tag. Resolve and inspect Compose configuration and actual container mounts to verify this boundary.
+
+Application services explicitly select the runtime Dockerfile target. The test service explicitly selects the test target and uses a distinct student test image tag. Use a student-specific runtime image tag as well, avoiding classroom dashbite:demo collisions. Allow tests and fixtures through .dockerignore while keeping them out of runtime images through explicit COPY instructions.
+
+Dependency locking and base-image digest pinning are optional follow-ups, not required implementation scope. The mandatory workflow provides repeatable commands and disposable environments, not fully frozen dependency resolution. Existing >= requirements and the floating Python image tag can change future rebuild results. Record Python, Docker, Compose, installed dependency versions and tested image IDs; describe this limitation rather than claiming bit-for-bit reproducibility. If strict dependency reproducibility is required by the rubric, review and add locking before Builder implementation.
+
+No DATA_ROOT override, Kubernetes deployment, scaling, automatic restart policy, model redesign, or application UI replacement is planned. Existing base arguments support temporary test workspaces. Clarify the README's outdated 'No containers' statement and mark the older Docker guide's unimplemented DATA_ROOT and Kubernetes content as conceptual guidance.
+
+### Health-check contract
+
+Use the installed Streamlit version's /_stcore/health endpoint at http://127.0.0.1:8501. Require HTTP 200 and a zero exit code; connection errors, non-200 responses and request timeout must produce a nonzero exit. Prefer Python urllib.request with a three-second request timeout. Initial Compose settings: interval 10s, timeout 5s, start_period 30s, retries 3. Tune only from observed startup behavior.
+
+Apply the check only to dashboard in Compose, not globally to the shared Dockerfile. Healthy establishes endpoint responsiveness only. It does not establish successful page rendering, correct/fresh data, model quality, pipeline progress, or upstream service health. Docker health status alone does not restart unhealthy containers.
+
+Where practical, exercise the actual probe against a controlled HTTP server for success, non-200 and connection-failure behavior. Verify live Docker health status and failure reporting in a disposable environment. Avoid tests that only search YAML for strings.
+
+### Test commands and isolation evidence
+
+Builder must provide final runnable equivalents of:
+
+    docker compose -p dashbite-b-tests --profile test config
+    docker compose -p dashbite-b-tests --profile test build tests
+    docker compose -p dashbite-b-tests --profile test run --rm --no-deps tests
+
+The service is provisionally named tests. Its command is python -m pytest, preserving pytest's exit status. Normal application startup must name the five runtime services explicitly; enabling the test profile must not be part of the normal startup shortcut. Test shortcuts must never invoke up for the whole stack. A profile alone does not guarantee isolation.
+
+Run baseline tests in Repository B before implementation, preserving the classroom checkout. Record results without representing inspection as test execution. Retain the existing full suite and add one meaningful integration test covering raw input -> preprocessing -> training -> inference -> dashboard loaders/metric helpers, entirely under tmp_path. Use fixed fixture IDs/timestamps and both label classes rather than the nondeterministic live simulator.
+
+Assert nonempty valid features and derived columns; quality rows_in = rows_out + rows_dropped; loadable checkpoint and valid training metrics/state; expected prediction ID coverage without duplicates; finite probabilities in [0, 1]; binary labels and correct checkpoint references; expected dashboard helper values; and no duplicate work on a second preprocessing/inference call without new input.
+
+Run the full container suite twice in fresh containers. In a disposable verification copy, introduce a deliberately failing test and confirm a nonzero command exit status. Remove the deliberate failure before final validation. Inspect actual test container mounts and confirm absence of runtime-volume access.
+
+For unchanged-data evidence, stop runtime writers and capture a file inventory plus content hashes of the named runtime volume before and after containerized tests. Include generated CSV, JSON, joblib and marker files. Compare host data separately if present. Running pipeline writers would invalidate an unchanged-hash comparison. Mounts and independent project names provide the primary isolation boundary; hashes provide supporting evidence.
+
+### Runtime verification and student smoke procedure
+
+Use explicit project names: dashbite-b for normal runtime and dashbite-b-smoke for disposable smoke testing. Verify the named data volume remains project-scoped, without an external or fixed global volume name. Do not share the classroom runtime volume. Account for an occupied dashboard port without stopping unrelated services.
+
+Validate resolved Compose configuration, build both targets, inspect image contents, then start all five smoke services on a fresh smoke volume. Use an initial two-minute deadline for raw CSVs, nonempty features, quality records, a loadable checkpoint, metrics JSON and populated predictions. Startup and output deadlines are separate. Diagnose deadline failures with logs and training thresholds; do not accept mere container startup as success.
+
+Check feature/prediction ID correspondence, probability ranges, checkpoint references and quality accounting. Observe a second interval to show advancing batches, throughput and predictions. In the browser, inspect Model Pulse and Ops Control and reconcile displayed metrics with actual artifacts. Review logs for tracebacks, repeated partial-file reads or stalled stages.
+
+After a checkpoint exists, stop only train; record the checkpoint ID, allow new raw/features to arrive, and verify new predictions reference that existing checkpoint while train remains stopped. Restart train afterward if needed.
+
+Stop and recreate smoke containers without deleting the volume. Record named-volume identity and artifact hashes across recreation before allowing writers to resume; verify retained artifacts and resumed progress. Ordinary shutdown uses down without -v. Any volume deletion must be a separately documented action targeting only the explicitly named disposable smoke project.
+
+A supplementary demonstration may stop simulator and show dashboard remains healthy while throughput ceases, making the health limitation concrete. Keep one instance of each service. Direct file writes and concurrent readers can race even at one replica; record any observed issue. Atomic-write redesign requires a separate scope decision if a defect blocks acceptance.
+
+### Evidence and handoff
+
+Builder implements the finalized plan and supplies exact commands. Student performs the manual smoke test before the separate Tester conversation. Tester independently verifies plan compliance, negative cases, data isolation and documentation, and records findings. Resolve important findings and rerun affected verification.
+
+README evidence must distinguish inspected, passed, failed, blocked and not-run checks. Capture actual screenshots under docs/images. Do not fabricate screenshots or completed observations. Network failures, including the student-reported prior Docker Hub connectivity problem, must be recorded separately from application defects.
+
+The accepted recommendation is a dashboard-only endpoint check with explicit limitations. The changed recommendation is using an opt-in profile rather than a standalone test Compose file; explain its convenience and the required independent service definition. Base the final reflection on actual implementation decisions.
+
+The student must export complete visible Architect, Builder and Tester conversations with the actual NetID and assignment-required headers/speaker labels, save them under docs/transcripts, and upload the same files separately to Canvas. NetID and required transcript header format remain to be supplied; do not fabricate them or substitute a summary for a transcript.
+
+Inspection evidence as of Architect finalization: baseline Compose validates; Docker 29.7.2 and Compose v5.4.0 are installed; Docker reports a Linux engine. No image builds, pytest runs, service startups or smoke tests were performed by Architect.
+
+References:
+- https://docs.streamlit.io/deploy/tutorials/docker
+- https://docs.docker.com/reference/compose-file/services/#healthcheck
+- https://docs.docker.com/reference/cli/docker/compose/run/
+
+[AGENT]
+Saved your revised plan with Architect clarifications as `docs/plan.md` in:
+
+`C:\Users\11758\OneDrive\Desktop\ids_706\DashBite-Repository-B`
+
+[Read the plan copy](outputs/Repository-B-plan.md)
+
+- Preserved Makefile and README edits exactly.
+- Left the classroom repository unchanged.
+- Removed Repository B’s inherited remote; nothing was pushed.
+- Made no application changes and ran no tests.
+- Included profile-isolation safeguards, meaningful output checks, and reproducibility limitations.
+
+Repository B remains uncommitted. The next step is the separate Builder conversation.
+
+[STUDENT]
+Please save the complete visible conversation from this Architect chat to:
+docs/transcripts/zx180_architect.txt
+Use this exact header:
+STUDENT_NAME: Zhuotong Xie\
+NETID: zx180\
+OPTION: 1\
+ROLE: architect\
+AGENT_TOOL: Codex\
+REPOSITORY_B_URL: [https://github.com/1175882849x-coder/DashBite-Repository-B](https://github.com/1175882849x-coder/DashBite-Repository-B)\
+\===== TRANSCRIPT START =====
+Label speakers with [STUDENT] and [AGENT]. Preserve all original messages in chronological order, including prompts, complete visible responses, follow-up questions, corrections, and the finalized plan.
+Do not summarize, shorten, rewrite, translate, or invent content. Preserve earlier messages in their original language. Include only visible conversation content, not hidden reasoning. Replace sensitive information with [REDACTED] if necessary.
+End the file with:\
+\===== TRANSCRIPT END =====
+If you cannot access any earlier messages verbatim, identify what is missing rather than reconstructing it or claiming the transcript is complete.
+Please respond in English.
+
+
+[AGENT]
+I’ll check whether Codex provides a verbatim export of this chat, then save the accessible messages with your exact header and speaker labels. If anything is unavailable, I’ll identify it rather than reconstruct it.
+
+[AGENT]
+Codex returned all three turns with no earlier page remaining, including the original prompts and full responses. I’ll preserve those messages verbatim and include the pasted attachment and saved finalized plan as separately identified artifacts. Hidden reasoning and tool-operation records will be excluded.
+
+[AGENT]
+Saved `docs/transcripts/zx180_architect.txt` in Repository B with your header and speaker labels, including all retrieved messages, the pasted plan, and finalized plan. Hidden reasoning and tool records are excluded.
+
+[Download the transcript](C:/Users/11758/Documents/Codex/2026-10-01/you-are-the-architect-for-my-2/outputs/zx180_architect.txt)
+
+===== TRANSCRIPT END =====
+
