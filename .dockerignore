@@ -4,6 +4,8 @@ __pycache__
 .pytest_cache
 .logs
 data
-tests
 docs
 *.pyc
+work
+.env
+.env.*

@@ -1,9 +1,14 @@
 # DashBite pipeline — common teaching commands
 # Usage: make help
 
-PYTHON      ?= python3
 VENV        ?= .venv
+ifeq ($(OS),Windows_NT)
+PYTHON      ?= python
+BIN         := $(VENV)/Scripts
+else
+PYTHON      ?= python3
 BIN         := $(VENV)/bin
+endif
 PY          := $(BIN)/python
 PIP         := $(BIN)/pip
 PYTEST      := $(BIN)/pytest
@@ -14,6 +19,7 @@ export TRAIN_EVERY_N_EVENTS    ?= 50
 export BATCH_SIZE              ?= 20
 export POLL_INTERVAL_SECONDS   ?= 2.0
 export CORRUPT_BATCH_RATE      ?= 0.25
+export PYTHONUTF8              ?= 1
 export PYTHONPATH              := $(CURDIR)
 
 LOG_DIR := .logs
@@ -26,6 +32,7 @@ PIDS    := $(LOG_DIR)/pids
 help:
 	@echo "DashBite Make targets"
 	@echo ""
+	@echo "  make container-build/up/status/logs/test/inspect/down (see README)"
 	@echo "  make install              Create .venv and install requirements"
 	@echo "  make test                 Run full pytest suite (unit+regression+integration)"
 	@echo "  make test-unit            Run unit tests only"
@@ -49,7 +56,7 @@ $(VENV)/.installed: requirements.txt
 	$(PYTHON) -m venv $(VENV)
 	$(PIP) install --upgrade pip
 	$(PIP) install -r requirements.txt
-	@touch $@
+	@$(PYTHON) -c "open(r'$@', 'a').close()"
 
 test: install
 	$(PYTEST)
@@ -119,3 +126,25 @@ clean: clean-data
 	@rm -rf $(LOG_DIR) .pytest_cache
 	@find . -type d -name __pycache__ -not -path './.venv/*' -exec rm -rf {} + 2>/dev/null || true
 	@echo "Clean complete."
+
+# Repository B container commands; independent from inherited local shortcuts.
+PROJECT ?= dashbite-b
+COMPOSE = docker compose -p $(PROJECT)
+TEST_COMPOSE = docker compose -p dashbite-b-tests --profile test
+SERVICES = simulator preprocess train infer dashboard
+.PHONY: container-build container-up container-status container-logs container-test container-inspect container-down
+container-build:
+	$(COMPOSE) build $(SERVICES)
+container-up:
+	$(COMPOSE) up -d $(SERVICES)
+container-status:
+	$(COMPOSE) ps -a
+container-logs:
+	$(COMPOSE) logs --tail=100 $(SERVICES)
+container-test:
+	$(TEST_COMPOSE) build tests
+	$(TEST_COMPOSE) run --rm --no-deps tests
+container-inspect:
+	$(COMPOSE) exec -T dashboard python -m pipeline.inspect_data
+container-down:
+	$(COMPOSE) down

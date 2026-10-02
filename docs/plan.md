@@ -248,3 +248,26 @@ References:
 - https://docs.streamlit.io/deploy/tutorials/docker
 - https://docs.docker.com/reference/compose-file/services/#healthcheck
 - https://docs.docker.com/reference/cli/docker/compose/run/
+
+## 12. Post-smoke implementation notes (2026-10-01)
+
+The student reported two discovered-and-fixed runtime issues: an IPv6-only Compose network
+with an IPv4 Streamlit listener, and `ModuleNotFoundError: No module named 'pipeline'` in the
+browser. The existing fixes explicitly enable IPv4/disable IPv6 for the default network and
+set `PYTHONPATH=/app` in the shared Docker base stage. Builder follow-up preserves these
+container-readiness fixes and adds actual network/import and dashboard-rendering regression
+coverage. The five services, independent training/inference, UI and test isolation remain as
+reviewed. No automatic restart or signal-handling redesign is added.
+
+The reported manual run used local ignored `work/port.yaml` on host port 8502; the default
+remains 8501. It reused data from Builder verification. Student-reported results are recorded
+in README separately from Builder checks. Training exited with 137, requiring Tester review;
+no graceful stop is claimed. On 2026-10-01, the student explicitly confirmed that the
+persistence snapshot comparison across recreation produced no output and the snapshots were
+identical. Record this as student-confirmed passed, separately from the earlier Builder hash
+comparison; no new Builder execution is implied.
+
+Student transcript details are now supplied: Zhuotong Xie, zx180, Option 1, Codex,
+https://github.com/1175882849x-coder/DashBite-Repository-B. Original visible messages must be
+preserved with the assignment headers and [STUDENT]/[AGENT] labels; export scope/limitations
+are recorded alongside the Builder transcript.

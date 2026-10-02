@@ -1,5 +1,7 @@
 # Dockerizing DashBite & Scaling with Kubernetes
 
+> Inherited conceptual guide: DATA_ROOT overrides and Kubernetes deployment/scaling below are not implemented or supported by Repository B. Use README.md for the actual five-service commands.
+
 Guide for packaging each pipeline stage as a container and scaling those images independently on Kubernetes. This document is a **design/runbook guide** — the repo may still run as local Python processes without Docker installed.
 
 Related: [Low-Level Design](./lld-dashbite-ml-pipeline.md)

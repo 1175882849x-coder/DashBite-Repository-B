@@ -1,6 +1,8 @@
 x-dashbite: &dashbite
-  build: .
-  image: dashbite:demo
+  build:
+    context: .
+    target: runtime
+  image: dashbite-b:runtime
   environment:
     TRAIN_EVERY_N_EVENTS: "50"
     BATCH_SIZE: "20"
@@ -34,8 +36,27 @@ services:
       - pipeline/dashboard/app.py
       - --server.address=0.0.0.0
       - --server.port=8501
+    healthcheck:
+      test: ["CMD", "python", "-m", "pipeline.healthcheck"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
     ports:
       - "127.0.0.1:8501:8501"
 
+  tests:
+    profiles: [test]
+    build:
+      context: .
+      target: test
+    image: dashbite-b:test
+    command: ["python", "-m", "pytest"]
+
 volumes:
   dashbite-data:
+
+networks:
+  default:
+    enable_ipv4: true
+    enable_ipv6: false
